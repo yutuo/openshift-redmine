@@ -1,10 +1,56 @@
 #!/bin/sh
+# http://openshift.github.io/documentation/oo_user_guide.html#the-openshift-directory
+# Executed on your CI system if available. Otherwise, executed before the build step
+
+# http://www.redmine.org/projects/redmine/wiki/RedmineInstall
+# Step 4 - Dependencies installation
 
 pushd "${OPENSHIFT_REPO_DIR}"
 
+# Though Openshift framework run bundler --deployment,
+# it requires Gemfile.lock.
+# To work without Gemfile.lock,
+# run bundler before the build phase of ruby.
 if [ -f Gemfile ]; then
   gem install bundler -no-ri -no-rdoc
-  echo > Gemfile.lock
+  # https://github.com/openshift/origin-server/blob/master/cartridges/openshift-origin-cartridge-ruby/bin/control
+  # .bundle and vendor/bundle directory is saved to ${OPENSHIFT_RUBY_DIR}tmp in
+  # pre-repo-archive phase.
+  # So recover it.
+  if [ -d "${OPENSHIFT_RUBY_DIR}/tmp/.bundle" ]; then
+    if [ -d ".bundle" ]; then
+      echo 'ERROR: You need to remove the ".bundle" directory from your GIT repository.' >&2
+      exit 1;
+    fi
+    mv "${OPENSHIFT_RUBY_DIR}/tmp/.bundle" .bundle
+  fi
+  
+  if [ -d "${OPENSHIFT_RUBY_DIR}/tmp/vendor" ]; then
+    if [ -d "vendor/bundle" ]; then
+      echo 'ERROR: You need to remove the "vendor/bundle" directory from your GIT repository.' >&2
+      exit 1;
+    fi
+    if [ -d "vendor" ]; then
+      mv "${OPENSHIFT_RUBY_DIR}/tmp/vendor/bundle" vendor
+    else
+      mv "${OPENSHIFT_RUBY_DIR}/tmp/vendor" .
+    fi
+  fi
+  
+  bundle install --without development test --path vendor/bundle
+  RET=$?
+  if [ "${RET}" != "0" ]; then
+    echo "Failed to run bundler with ${RET}" >&2
+    exit ${RET}
+  fi
+  
+  rm -f "${OPENSHIFT_RUBY_DIR}tmp/.bundle"
+  rm -f "${OPENSHIFT_RUBY_DIR}/tmp/"
+  
+  mv .bundle "${OPENSHIFT_RUBY_DIR}tmp/.bundle"
+  mv vendor "${OPENSHIFT_RUBY_DIR}/tmp/"
 fi
 
 popd
+
+exit 0
