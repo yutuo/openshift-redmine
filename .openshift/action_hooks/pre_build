@@ -1,1 +1,10 @@
 #!/bin/sh
+
+pushd "${OPENSHIFT_REPO_DIR}"
+
+if [ -f Gemfile ]; then
+  gem install bundler -no-ri -no-rdoc
+  echo > Gemfile.lock
+fi
+
+popd
