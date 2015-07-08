@@ -12,7 +12,10 @@ pushd "${OPENSHIFT_REPO_DIR}"
 # To work without Gemfile.lock,
 # run bundler before the build phase of ruby.
 if [ -f Gemfile ]; then
+  gem install rails -v '4.2.1'
   gem install bundler -no-ri -no-rdoc
+  gem install mysql2 -v '0.3.18'
+
   # https://github.com/openshift/origin-server/blob/master/cartridges/openshift-origin-cartridge-ruby/bin/control
   # .bundle and vendor/bundle directory is saved to ${OPENSHIFT_RUBY_DIR}tmp in
   # pre-repo-archive phase.
@@ -37,7 +40,7 @@ if [ -f Gemfile ]; then
     fi
   fi
   
-  bundle install --without development test --path vendor/bundle
+  bundle install --no-deployment
   RET=$?
   if [ "${RET}" != "0" ]; then
     echo "Failed to run bundler with ${RET}" >&2
