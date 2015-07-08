@@ -1,0 +1,131 @@
+#!/bin/sh
+# http://openshift.github.io/documentation/oo_user_guide.html#the-openshift-directory
+# Executed after dependencies are resolved but before application has started
+
+doMysql() {
+mysql -h "${OPENSHIFT_MYSQL_DB_HOST}" \
+      -P "${OPENSHIFT_MYSQL_DB_PORT}" \
+      -u "${OPENSHIFT_MYSQL_DB_USERNAME}" \
+      --password="${OPENSHIFT_MYSQL_DB_PASSWORD}" \
+      "${OPENSHIFT_APP_NAME}" \
+      "$@"
+}
+
+check_and_mkdir() {
+  local dir=$1
+  local ret=
+  if [ ! -d "${dir}" ]; then
+    mkdir -p "${dir}"
+    ret=$?
+    if [ "${ret}" != "0" ]; then
+      echo "Failed to create ${dir} with ${ret}" >&2
+      exit ${ret}
+    fi
+  fi
+}
+
+create_link() {
+  local src="$1"
+  local dest="$2"
+  local ret=
+  
+  check_and_mkdir "${dest}"
+  
+  if [ ! -h "${src}" ]; then
+    if [ -d "${src}" ]; then
+      echo "${src} already exists. It should not exist." >&2
+      exit 1
+    fi
+    ln -sT ${dest} ${src}
+    ret=$?
+    if [ "${ret}" != "0" ]; then
+      echo "Failed to create symlink as ${src} with ${ret}" >&2
+      exit ${ret}
+    fi
+  fi
+}
+
+
+if [ ! -f "${OPENSHIFT_REPO_DIR}/Rakefile" ]; then
+  # As Rakefile is not located, Redmine should not be deployed.
+  # do not do deploy operation.
+  exit 0
+fi
+
+if [ -z "${OPENSHIFT_MYSQL_DB_HOST}" ]; then
+  echo "MYSQL is not available" >&2
+  exit 1
+fi
+
+
+# place directories:
+#
+# directories placed to ${OPENSHIFT_DATA_DIR}
+# * files
+# * public/plugin_assets
+# 
+# directoreis placed to ${OPENSHIFT_LOG_DIR}
+# * log
+
+pushd "${OPENSHIFT_REPO_DIR}"
+
+create_link files                "${OPENSHIFT_DATA_DIR}/redmine/files"
+create_link public/plugin_assets "${OPENSHIFT_DATA_DIR}/redmine/plugin_assets"
+create_link log                  "${OPENSHIFT_LOG_DIR}"
+chmod -R 755 files log tmp public/plugin_assets
+
+popd
+
+# http://www.redmine.org/projects/redmine/wiki/RedmineInstall
+# Step 5 - Session store secret generation
+pushd "${OPENSHIFT_REPO_DIR}"
+# RAILS_ENV=production rake generate_secret_token
+rake generate_secret_token
+RET=$?
+popd
+
+if [ "${RET}" != "0" ]; then
+  echo "Failed to generate_secret_token with ${RET}" >&2
+  exit ${RET}
+fi
+
+# test whether already database is available.
+doMysql -r --batch -nN -e "select name from roles;" | grep -q .
+DATA_AVAILABLE=$?
+
+# http://www.redmine.org/projects/redmine/wiki/RedmineInstall
+# Step 6 - Database schema objects creation
+pushd "${OPENSHIFT_REPO_DIR}"
+RAILS_ENV=production rake db:migrate
+RET=$?
+popd
+
+if [ "${RET}" != "0" ]; then
+  echo "Failed to db:migrate with ${RET}" >&2
+  exit ${RET}
+fi
+
+# http://www.redmine.org/projects/redmine/wiki/RedmineInstall
+# Step 7 - Database default data set
+if [ "${DATA_AVAILABLE}" != "0" ]; then
+  pushd "${OPENSHIFT_REPO_DIR}"
+  RAILS_ENV=production REDMINE_LANG=${REDMINE_LANG:-en} rake redmine:load_default_data
+  RET=$?
+  popd
+  
+  if [ "${RET}" != "0" ]; then
+    echo "Failed to redmine:load_default_data with ${RET}" >&2
+    exit ${RET}
+  fi
+fi
+
+#
+pushd "${OPENSHIFT_REPO_DIR}"
+RAILS_ENV=production bundle exec rake redmine:plugins:migrate
+RET=$?
+popd
+
+if [ "${RET}" != "0" ]; then
+  echo "Failed to redmine:plugins:migrate with ${RET}" >&2
+  exit ${RET}
+fi
